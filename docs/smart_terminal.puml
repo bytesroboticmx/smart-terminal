@@ -1,0 +1,213 @@
+@startuml smart_terminal
+title smart-terminal — Diagrama de clases
+
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam shadowing false
+
+package "smart_terminal" {
+  package "app" {
+    class App <<module>> {
+      + run() : Result<()>
+    }
+  }
+
+  package "cli" {
+    class Cli <<module>> {
+      + parse() : CliArgs
+      + load_config(args: &CliArgs) : Result<Config>
+    }
+    class CliArgs {
+      + config_path : Option<String>
+      + command : Option<String>
+    }
+  }
+
+  package "config" {
+    class Config {
+      + shell : ShellConfig
+      + ai : AiConfig
+      + ui : UiConfig
+      + load(path: Option<&str>) : Result<Config>
+    }
+    class ShellConfig {
+      + history_size : usize
+      + timeout_seconds : u64
+      + confirm_dangerous_commands : bool
+    }
+    class AiConfig {
+      + enabled : bool
+      + provider : String
+      + model : String
+      + api_key_env : String
+    }
+    class UiConfig {
+      + theme : String
+      + show_banner : bool
+    }
+  }
+
+  package "error" {
+    enum Error {
+      Config(String)
+      Io(std::io::Error)
+      Ai(String)
+      Execution(String)
+      NotImplemented(&'static str)
+    }
+  }
+
+  package "terminal" {
+    class InputReader {
+      + new() : Self
+      + read_line() : Result<String>
+    }
+    class OutputWriter {
+      + new() : Self
+      + write_line(text: &str) : Result<()>
+    }
+    class SessionState {
+      + cwd : PathBuf
+      + env : HashMap<String, String>
+      + running : bool
+    }
+  }
+
+  package "shell" {
+    enum Command {
+      Builtin(String)
+      External(program, args)
+      Ai(String)
+    }
+    class ExecutionResult {
+      + stdout : String
+      + stderr : String
+      + exit_code : Option<i32>
+    }
+    class Executor {
+      + new() : Self
+      + execute(command: &Command) : Result<ExecutionResult>
+    }
+    class History {
+      - entries : Vec<String>
+      - max_size : usize
+      + new(max_size: usize) : Self
+      + push(entry: String)
+      + entries() : &[String]
+      + max_size() : usize
+    }
+    class ShellParser <<module>> {
+      + parse(input: &str) : Result<Command>
+    }
+  }
+
+  package "ai" {
+    interface LlmClient {
+      + complete(prompt: &str) : Result<String>
+    }
+    class HttpLlmClient
+    enum Intent {
+      Chat
+      Explain(String)
+      GenerateCommand(description)
+      FixError(command, error)
+    }
+    class Plan {
+      + steps : Vec<String>
+    }
+    enum SafetyVerdict {
+      Allow
+      Confirm(String)
+      Block(String)
+    }
+    class AiPlanner <<module>> {
+      + plan(intent: &Intent) : Result<Plan>
+    }
+    class AiSafety <<module>> {
+      + check(command: &str) : SafetyVerdict
+    }
+    class AiEngine
+  }
+
+  package "commands" {
+    enum BuiltinCommand {
+      Help
+      Clear
+      History
+      Config
+      Exit
+    }
+    class ExternalCommand {
+      + program : String
+      + args : Vec<String>
+    }
+  }
+
+  package "plugins" {
+    interface Plugin {
+      + name() : &str
+      + on_command(command: &str)
+    }
+    class PluginRegistry {
+      - plugins : Vec<Box<dyn Plugin>>
+      + register(plugin: Box<dyn Plugin>)
+      + plugins() : &[Box<dyn Plugin>]
+    }
+  }
+
+  package "ui" {
+    class Prompt {
+      + text : String
+      + render() : String
+    }
+    class Theme {
+      + prompt_color : String
+      + error_color : String
+      + success_color : String
+    }
+  }
+}
+
+' Dependencias y composición
+App ..> CliArgs : usa
+App ..> Config : carga
+App ..> InputReader : lee
+App ..> OutputWriter : escribe
+App ..> AiEngine : consulta
+
+Cli ..> Config : carga
+CliArgs ..> Config : configura
+
+Config *-- ShellConfig
+Config *-- AiConfig
+Config *-- UiConfig
+
+ShellParser ..> Command : produce
+Executor ..> Command : ejecuta
+Executor ..> ExecutionResult : devuelve
+History ..> Command : registra
+ExternalCommand ..> ExecutionResult : produce
+
+AiEngine o-- LlmClient : usa
+HttpLlmClient ..|> LlmClient : implementa
+AiEngine ..> Intent : detecta
+AiEngine ..> Plan : propone
+AiEngine ..> SafetyVerdict : valida
+AiPlanner ..> Intent : analiza
+AiPlanner ..> Plan : construye
+AiSafety ..> SafetyVerdict : emite
+
+PluginRegistry o-- Plugin : contiene
+Prompt ..> Theme : aplica
+
+' Layout compacto: fuerza una disposición más vertical entre paquetes
+app -[hidden]down- cli
+cli -[hidden]down- config
+config -[hidden]down- error
+error -[hidden]down- terminal
+terminal -[hidden]down- shell
+shell -[hidden]down- commands
+commands -[hidden]down- ai
+ai -[hidden]down- plugins
+plugins -[hidden]down- ui
+@enduml
